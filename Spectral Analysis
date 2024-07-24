@@ -1,0 +1,301 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from lmfit import Minimizer, Parameters, report_fit
+from astropy.io import fits
+import csv
+import os
+from scipy.stats import zscore
+
+# Define the 2D Gaussian function
+def gaussian_2d(x, y, x0, y0, sigma, height, offset):
+    return offset + height * np.exp(-(((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma ** 2)))
+
+# Residuals to minimize relative to the error bars
+def residual(params, x, y, data, error):
+    x0 = params['x0']
+    y0 = params['y0']
+    sigma = params['sigma']
+    height = params['height']
+    offset = params['offset']
+    
+    model = gaussian_2d(x, y, x0, y0, sigma, height, offset)
+    
+    return (data - model) / error
+
+# Function to calculate goodness of fit
+def calculate_goodness_of_fit(data, model, error):
+    residuals = data - model
+    chi_squared = np.sum((residuals / error) ** 2)
+    reduced_chi_squared = chi_squared / (data.size - 6)  # 6 parameters in the model
+    r_squared = 1 - np.sum(residuals**2) / np.sum((data - np.mean(data))**2)
+    return chi_squared, reduced_chi_squared, r_squared
+
+# Function to load MUSE data from a FITS file
+def load_muse_data(filename, wavelength_index):
+    with fits.open(filename) as hdul:
+        data = hdul[1].data  # Data is in the second HDU (index 1)
+        uncertainties = hdul[2].data  # Uncertainties are in the third HDU (index 2)
+    # Extract the slice for the given wavelength index
+    return data[wavelength_index], uncertainties[wavelength_index]
+
+# Function to plot the stellar spectra
+def plot_stellar_spectra(wavelengths, intensities_dict, star_id):
+    plt.figure(figsize=(10, 6))
+    for label, intensities in intensities_dict.items():
+        # Ensure valid_indices match the dimension of wavelengths
+        valid_indices = np.array([not np.isnan(i) for i in intensities])
+        if len(valid_indices) != len(wavelengths):
+            print(f"Length mismatch for {label}: len(wavelengths) = {len(wavelengths)}, len(valid_indices) = {len(valid_indices)}")
+            continue
+        valid_wavelengths = np.array(wavelengths)[valid_indices]
+        valid_intensities = np.array(intensities)[valid_indices]
+        plt.plot(valid_wavelengths, valid_intensities, marker='o', linestyle='-', label=label)
+    
+    plt.xlabel('Wavelength (Angstrom)')
+    plt.ylabel('Intensity')
+    plt.title(f'Stellar Spectra for Star {star_id}')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+# Function to load saved fit results from CSV
+def load_saved_fit_results(star_id, spectrum_type, num_wavelengths, folder_path):
+    csv_filename = os.path.join(folder_path, f'star_{star_id}_fit_results_{spectrum_type}.csv')
+    fitted_intensities = [np.nan] * num_wavelengths  # Initialize with NaNs
+    fit_statistics = {'chi_squared': [np.nan] * num_wavelengths, 'reduced_chi_squared': [np.nan] * num_wavelengths, 'r_squared': [np.nan] * num_wavelengths}
+
+    if os.path.exists(csv_filename):
+        with open(csv_filename, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                idx = int(row['wavelength_index'])
+                if 0 <= idx < num_wavelengths:  # Ensure the index is within the valid range
+                    fitted_intensities[idx] = float(row['fitted_intensity'])
+                    fit_statistics['chi_squared'][idx] = float(row['chi_squared'])
+                    fit_statistics['reduced_chi_squared'][idx] = float(row['reduced_chi_squared'])
+                    fit_statistics['r_squared'][idx] = float(row['r_squared'])
+
+    return fitted_intensities, fit_statistics
+
+# Function to calculate the scaling factor
+def calculate_scaling_factor(fit_intensities, sum_intensities):
+    valid_indices = ~np.isnan(fit_intensities) & ~np.isnan(sum_intensities)
+    fit_intensities = np.array(fit_intensities)[valid_indices]
+    sum_intensities = np.array(sum_intensities)[valid_indices]
+    scaling_factor = np.median(fit_intensities / sum_intensities)
+    return scaling_factor
+
+# Function to remove outliers using Z-score
+def remove_outliers(intensities, threshold=3.0):
+    intensities = np.array(intensities)
+    z_scores = zscore(intensities, nan_policy='omit')
+    valid_indices = np.abs(z_scores) < threshold
+    return np.where(valid_indices, intensities, np.nan)
+
+# Main script
+if __name__ == "__main__":
+    # FITS header values for the wavelength axis
+    crval3 = 4700.0  # Starting wavelength (Angstrom)
+    crpix3 = 1.0     # Reference pixel
+    cd3_3 = 1.25     # Wavelength increment per pixel (Angstrom/pixel)
+
+    # Calculate the wavelengths from the indices
+    wavelengths = [crval3 + (i - crpix3) * cd3_3 for i in range(3681)]
+
+    # Replace 'DATACUBE_595s.fits' with the actual file path
+    filename = 'DATACUBE_595s.fits'
+    # Define the coordinates for the stars
+    stars = [((46, 243), 46, 243), ((202, 275), 202, 275), ((165, 230), 165, 230), ((80, 122), 80, 122), ((48, 205), 48, 205),
+             ((35, 196), 35, 196), ((21, 188), 21, 188), ((96, 225), 96, 225), ((213, 252), 213, 252), ((244, 231), 244, 231),
+             ((119, 171), 119, 171), ((53, 140), 53, 140), ((139, 193), 139, 193), ((132, 64), 132, 64), ((230, 151), 230, 151),
+             ((131, 286), 131, 286), ((130, 292), 130, 292), ((140, 248), 140, 248), ((85, 271), 85, 271), ((97, 259), 97, 259),
+             ((63, 266), 63, 266), ((54, 255), 54, 255), ((74, 253), 74, 253), ((60, 243), 60, 243), ((68, 228), 68, 228),
+             ((241, 252), 241, 252), ((240, 257), 240, 257), ((233, 268), 233, 268), ((168, 62), 168, 62),((181, 113), 181, 113), 
+             ((150, 116), 150, 116), ((180, 64), 180, 64), ((196, 73), 196, 73), ((230, 62), 230, 62), ((265, 112), 265, 112), 
+             ((257, 138), 257, 138), ((243, 151), 243, 151), ((246, 157), 246, 157), ((244, 172), 244, 172), ((263, 205), 263, 205), 
+             ((227, 177), 227, 177), ((204, 250), 204, 250), ((155, 237), 155, 237), ((119, 104), 119, 104), ((80, 122), 80, 122), 
+             ((87, 253), 87, 253), ((193, 191), 193, 191), ((205, 125), 205, 125), ((215, 129), 215, 129), ((59, 197), 59, 197), 
+             ((169, 210), 169, 210), ((110, 234), 110, 234)]  # List of tuples (star_id, x0, y0)
+
+    # Define the folder path for CSV files
+    folder_path = 'Star_CSVs'
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+
+    for star_id, x0, y0 in stars:
+        spectra_types = ['5x5', 'gaussian', 'pixel']
+        intensities_dict = {spectrum_type: load_saved_fit_results(star_id, spectrum_type, len(wavelengths), folder_path)[0] for spectrum_type in spectra_types}
+        fit_statistics = {spectrum_type: load_saved_fit_results(star_id, spectrum_type, len(wavelengths), folder_path)[1] for spectrum_type in spectra_types}
+
+        if all(np.isnan(intensities_dict['5x5'])):
+            for spectrum_type in spectra_types:
+                intensities_dict[spectrum_type] = []  # Initialize with empty lists for each type
+            fit_statistics = {spectrum_type: {'chi_squared': [], 'reduced_chi_squared': [], 'r_squared': []} for spectrum_type in spectra_types}
+
+            for wavelength_index in range(len(wavelengths)):
+                # Skip the wavelength indices 886 to 1013
+                if 886 <= wavelength_index <= 1013:
+                    for spectrum_type in spectra_types:
+                        intensities_dict[spectrum_type].append(np.nan)  # Append NaN to keep the array length consistent
+                        fit_statistics[spectrum_type]['chi_squared'].append(np.nan)
+                        fit_statistics[spectrum_type]['reduced_chi_squared'].append(np.nan)
+                        fit_statistics[spectrum_type]['r_squared'].append(np.nan)
+                    continue
+
+                try:
+                    # Load the image data and uncertainties for the current wavelength
+                    image_data, uncertainties = load_muse_data(filename, wavelength_index)
+
+                    # Extract a 15x15 sub-image around the star
+                    if y0-7 < 0 or y0+8 > image_data.shape[0] or x0-7 < 0 or x0+8 > image_data.shape[1]:
+                        raise ValueError("Sub-image goes out of bounds")
+
+                    sub_image = image_data[y0-7:y0+8, x0-7:x0+8]
+                    sub_uncertainties = uncertainties[y0-7:y0+8, x0-7:x0+8]
+
+                    if sub_image.shape != (15, 15) or sub_uncertainties.shape != (15, 15):
+                        raise ValueError("Sub-image is not of shape (15, 15)")
+
+                    # Calculate the standard deviation of the noise from a region in the data
+                    noise_region = np.concatenate((
+                        sub_image[:3, :3].flatten(),  # Top-left corner
+                        sub_image[:3, -3:].flatten(),  # Top-right corner
+                        sub_image[-3:, :3].flatten(),  # Bottom-left corner
+                        sub_image[-3:, -3:].flatten()  # Bottom-right corner
+                    ))
+                    noise_std = np.std(noise_region)
+                    print(f"Estimated noise standard deviation: {noise_std}")
+
+                    # Fit the 2D Gaussian Model
+                    x = np.linspace(0, 14, 15)
+                    y = np.linspace(0, 14, 15)
+                    X, Y = np.meshgrid(x, y)
+
+                    # Improved initial parameter estimates
+                    initial_x0 = np.argmax(np.sum(sub_image, axis=0))  # Initial guess for x0
+                    initial_y0 = np.argmax(np.sum(sub_image, axis=1))  # Initial guess for y0
+                    initial_height = sub_image[initial_y0, initial_x0]  # Initial guess for height
+                    initial_offset = np.median(sub_image)  # Initial guess for offset
+
+                    params = Parameters()
+                    params.add('x0', value=initial_x0)
+                    params.add('y0', value=initial_y0)
+                    params.add('sigma', value=1)
+                    params.add('height', value=initial_height)
+                    params.add('offset', value=initial_offset)
+
+                    minner = Minimizer(residual, params, fcn_args=(X, Y, sub_image, noise_std))
+                    result = minner.minimize()
+
+                    report_fit(result)
+
+                    fit = result.params.valuesdict()
+                    print(fit)
+
+                    model = gaussian_2d(X, Y, fit['x0'], fit['y0'], fit['sigma'], fit['height'], fit['offset'])
+                    chi_squared, reduced_chi_squared, r_squared = calculate_goodness_of_fit(sub_image, model, noise_std)
+
+                    print(f"Chi-squared: {chi_squared}")
+                    print(f"Reduced Chi-squared: {reduced_chi_squared}")
+                    print(f"R-squared: {r_squared}")
+
+                    # Gaussian fitted intensity
+                    if fit['height'] < 10000:  # Ignore intensities above 10000
+                        intensities_dict['gaussian'].append(fit['height'])
+                        fit_statistics['gaussian']['chi_squared'].append(chi_squared)
+                        fit_statistics['gaussian']['reduced_chi_squared'].append(reduced_chi_squared)
+                        fit_statistics['gaussian']['r_squared'].append(r_squared)
+                    else:
+                        intensities_dict['gaussian'].append(np.nan)
+                        fit_statistics['gaussian']['chi_squared'].append(np.nan)
+                        fit_statistics['gaussian']['reduced_chi_squared'].append(np.nan)
+                        fit_statistics['gaussian']['r_squared'].append(np.nan)
+
+                    # 5x5 summed intensity
+                    center_x, center_y = int(fit['x0']), int(fit['y0'])
+                    x_min, x_max = max(center_x - 2, 0), min(center_x + 3, model.shape[1])
+                    y_min, y_max = max(center_y - 2, 0), min(center_y + 3, model.shape[0])
+                    summed_intensity = np.sum(model[y_min:y_max, x_min:x_max])
+
+                    # Background 5x5 area beside the star for subtraction
+                    bg_x_min, bg_x_max = max(x0 + 7, 0), min(x0 + 12, sub_image.shape[1])  # Adjust these as needed
+                    bg_y_min, bg_y_max = max(y0 - 2, 0), min(y0 + 3, sub_image.shape[0])  # Adjust this as needed to select the background region
+                    background_intensity = np.sum(sub_image[bg_y_min:bg_y_max, bg_x_min:bg_x_max])
+
+                    net_intensity = summed_intensity - background_intensity
+
+                    scaling_factor = 0.2  # Initial scaling factor
+                    adjusted_intensity = net_intensity * scaling_factor
+                    intensities_dict['5x5'].append(adjusted_intensity)
+                    fit_statistics['5x5']['chi_squared'].append(chi_squared)
+                    fit_statistics['5x5']['reduced_chi_squared'].append(reduced_chi_squared)
+                    fit_statistics['5x5']['r_squared'].append(r_squared)
+
+                    # Central pixel intensity
+                    intensity = model[center_y, center_x]
+                    intensities_dict['pixel'].append(intensity)
+                    fit_statistics['pixel']['chi_squared'].append(chi_squared)
+                    fit_statistics['pixel']['reduced_chi_squared'].append(reduced_chi_squared)
+                    fit_statistics['pixel']['r_squared'].append(r_squared)
+
+                except Exception as e:
+                    print(f"Error processing star {star_id} at wavelength index {wavelength_index}: {e}")
+                    for spectrum_type in spectra_types:
+                        intensities_dict[spectrum_type].append(np.nan)  # Append NaN if there's an error
+                        fit_statistics[spectrum_type]['chi_squared'].append(np.nan)
+                        fit_statistics[spectrum_type]['reduced_chi_squared'].append(np.nan)
+                        fit_statistics[spectrum_type]['r_squared'].append(np.nan)
+
+            # Ensure all intensities arrays have the same length
+            for spectrum_type in spectra_types:
+                if len(intensities_dict[spectrum_type]) < len(wavelengths):
+                    missing_length = len(wavelengths) - len(intensities_dict[spectrum_type])
+                    intensities_dict[spectrum_type].extend([np.nan] * missing_length)
+                if len(fit_statistics[spectrum_type]['chi_squared']) < len(wavelengths):
+                    missing_length = len(wavelengths) - len(fit_statistics[spectrum_type]['chi_squared'])
+                    fit_statistics[spectrum_type]['chi_squared'].extend([np.nan] * missing_length)
+                    fit_statistics[spectrum_type]['reduced_chi_squared'].extend([np.nan] * missing_length)
+                    fit_statistics[spectrum_type]['r_squared'].extend([np.nan] * missing_length)
+
+            # Remove outliers for all spectra types
+            for spectrum_type in spectra_types:
+                intensities_dict[spectrum_type] = remove_outliers(intensities_dict[spectrum_type])
+
+            # Calculate the scaling factor using the Gaussian and 5x5 summed intensities
+            scaling_factor = calculate_scaling_factor(intensities_dict['gaussian'], intensities_dict['5x5'])
+            intensities_dict['5x5'] = [i * scaling_factor if not np.isnan(i) else np.nan for i in intensities_dict['5x5']]
+
+            # Save fit results to CSV files
+            for spectrum_type in spectra_types:
+                csv_filename = os.path.join(folder_path, f'star_{star_id}_fit_results_{spectrum_type}.csv')
+                with open(csv_filename, mode='w', newline='') as csvfile:
+                    fieldnames = ['wavelength_index', 'fitted_intensity', 'chi_squared', 'reduced_chi_squared', 'r_squared']
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for idx in range(len(intensities_dict[spectrum_type])):
+                        writer.writerow({
+                            'wavelength_index': idx,
+                            'fitted_intensity': intensities_dict[spectrum_type][idx],
+                            'chi_squared': fit_statistics[spectrum_type]['chi_squared'][idx],
+                            'reduced_chi_squared': fit_statistics[spectrum_type]['reduced_chi_squared'][idx],
+                            'r_squared': fit_statistics[spectrum_type]['r_squared'][idx]
+                        })
+
+        else:
+            # Ensure all intensities arrays have the same length
+            for spectrum_type in spectra_types:
+                if len(intensities_dict[spectrum_type]) < len(wavelengths):
+                    missing_length = len(wavelengths) - len(intensities_dict[spectrum_type])
+                    intensities_dict[spectrum_type].extend([np.nan] * missing_length)
+                if len(fit_statistics[spectrum_type]['chi_squared']) < len(wavelengths):
+                    missing_length = len(wavelengths) - len(fit_statistics[spectrum_type]['chi_squared'])
+                    fit_statistics[spectrum_type]['chi_squared'].extend([np.nan] * missing_length)
+                    fit_statistics[spectrum_type]['reduced_chi_squared'].extend([np.nan] * missing_length)
+                    fit_statistics[spectrum_type]['r_squared'].extend([np.nan] * missing_length)
+
+            # Remove outliers for all spectra types
+            for spectrum_type in spectra_types:
+                intensities_dict[spectrum_type] = remove_outliers(intensities_dict[spectrum_type])
+
+        # Plot the resulting stellar spectra
+        plot_stellar_spectra(wavelengths, intensities_dict, star_id)

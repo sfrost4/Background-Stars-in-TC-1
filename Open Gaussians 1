@@ -1,0 +1,95 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import csv
+import os
+
+# Function to load saved fit results for the star
+def load_saved_fit_results_star(star_id, num_wavelengths):
+    csv_filename = f'star_{star_id}_fit_results.csv'
+    fitted_intensities = [np.nan] * num_wavelengths  # Initialize with NaNs
+    fit_statistics = {'chi_squared': [np.nan] * num_wavelengths, 'reduced_chi_squared': [np.nan] * num_wavelengths, 'r_squared': [np.nan] * num_wavelengths}
+
+    if os.path.exists(csv_filename):
+        with open(csv_filename, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                idx = int(row['wavelength_index'])
+                fitted_intensities[idx] = float(row['fitted_intensity'])
+                fit_statistics['chi_squared'][idx] = float(row['chi_squared'])
+                fit_statistics['reduced_chi_squared'][idx] = float(row['reduced_chi_squared'])
+                fit_statistics['r_squared'][idx] = float(row['r_squared'])
+
+    return fitted_intensities, fit_statistics
+
+# Function to load saved fit results for the 5x5 region
+def load_saved_fit_results_5x5(star_id, num_wavelengths):
+    csv_filename = f'star_{star_id}_fit_results_5x5.csv'
+    fitted_intensities = [np.nan] * num_wavelengths  # Initialize with NaNs
+    fit_statistics = {'chi_squared': [np.nan] * num_wavelengths, 'reduced_chi_squared': [np.nan] * num_wavelengths, 'r_squared': [np.nan] * num_wavelengths}
+
+    if os.path.exists(csv_filename):
+        with open(csv_filename, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                idx = int(row['wavelength_index'])
+                fitted_intensities[idx] = float(row['fitted_intensity'])
+                fit_statistics['chi_squared'][idx] = float(row['chi_squared'])
+                fit_statistics['reduced_chi_squared'][idx] = float(row['reduced_chi_squared'])
+                fit_statistics['r_squared'][idx] = float(row['r_squared'])
+
+    return fitted_intensities, fit_statistics
+
+# Function to load saved fit results for the center pixel
+def load_saved_fit_results_pixel(star_id, num_wavelengths):
+    csv_filename = f'star_{star_id}_fit_results_pixel.csv'
+    fitted_intensities = [np.nan] * num_wavelengths  # Initialize with NaNs
+    fit_statistics = {'chi_squared': [np.nan] * num_wavelengths, 'reduced_chi_squared': [np.nan] * num_wavelengths, 'r_squared': [np.nan] * num_wavelengths}
+
+    if os.path.exists(csv_filename):
+        with open(csv_filename, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                idx = int(row['wavelength_index'])
+                fitted_intensities[idx] = float(row['fitted_intensity'])
+                fit_statistics['chi_squared'][idx] = float(row['chi_squared'])
+                fit_statistics['reduced_chi_squared'][idx] = float(row['reduced_chi_squared'])
+                fit_statistics['r_squared'][idx] = float(row['r_squared'])
+
+    return fitted_intensities, fit_statistics
+
+# Function to plot the stellar spectrum
+def plot_stellar_spectrum(wavelengths, intensities, label):
+    # Filter out NaN values in intensities array
+    valid_indices = ~np.isnan(intensities)
+    valid_wavelengths = np.array(wavelengths)[valid_indices]
+    valid_intensities = np.array(intensities)[valid_indices]
+
+    plt.plot(valid_wavelengths, valid_intensities, marker='o', linestyle='-', label=label)
+
+# Main script
+if __name__ == "__main__":
+    star_id = (119, 171)
+    num_wavelengths = 3681
+
+    # Load fit results for different methods
+    fitted_intensities_star, fit_statistics_star = load_saved_fit_results_star(star_id, num_wavelengths)
+    fitted_intensities_5x5, fit_statistics_5x5 = load_saved_fit_results_5x5(star_id, num_wavelengths)
+    fitted_intensities_pixel, fit_statistics_pixel = load_saved_fit_results_pixel(star_id, num_wavelengths)
+
+    # Calculate the wavelengths from the indices
+    crval3 = 4700.0  # Starting wavelength (Angstrom)
+    crpix3 = 1.0     # Reference pixel
+    cd3_3 = 1.25     # Wavelength increment per pixel (Angstrom/pixel)
+    wavelengths = [crval3 + (i - crpix3) * cd3_3 for i in range(num_wavelengths)]
+
+    # Plot the results
+    plt.figure(figsize=(10, 6))
+    plot_stellar_spectrum(wavelengths, fitted_intensities_star, label='Star Fit')
+    plot_stellar_spectrum(wavelengths, fitted_intensities_5x5, label='5x5 Region Fit')
+    plot_stellar_spectrum(wavelengths, fitted_intensities_pixel, label='Pixel Fit')
+    plt.xlabel('Wavelength (Angstrom)')
+    plt.ylabel('Intensity')
+    plt.legend()
+    plt.grid(True)
+    plt.title(f'Comparison of Stellar Spectra for Star {star_id}')
+    plt.show()
